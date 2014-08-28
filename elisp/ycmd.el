@@ -1,5 +1,4 @@
 (require 'hmac-def)
-(require 'hmac-md5)
 (require 'json)
 (require 'request)
 
@@ -25,60 +24,92 @@
 ;;     "filepath": "/Users/sixtynorth/projects/ycmd/examples/samples/some_cpp.cpp", 
 ;;     "line_num": 25
 ;; }
+;; (setq data '(("column_num" . 16)
+;; 	     ("file_data" .
+;; 	      (("/Users/sixtynorth/sandbox/clang_rename/foo.cpp" .
+;; 		(("contents" . "#include \"foo.hpp\"
 
-(setq data '(("column_num" . 16)
-	     ("file_data" .
-	      (("/Users/sixtynorth/sandbox/clang_rename/foo.cpp" .
-		(("contents" . "#include \"foo.hpp\"
+;; void Foo::foo() {
+;;     int x = fno
+;;     int y = x + 1;
+;; }
+;; ")
+;; 		 ("filetypes" . ("cpp"))))))
+;; 	     ("filepath" . "/Users/sixtynorth/sandbox/clang_rename/foo.cpp")
+;; 	     ("line_num" . 4))
+;;       )
 
-void Foo::foo() {
-    int x = fno
-    int y = x + 1;
-}
-")
-		 ("filetypes" . ("cpp"))))))
-	     ("filepath" . "/Users/sixtynorth/sandbox/clang_rename/foo.cpp")
-	     ("line_num" . 4))
-      )
+(defcustom ycmd-host "127.0.0.1"
+  :type '(string)
+  :group 'ycmd)
 
-                                        ; Create 16-bytes of secret
-                                        ; encrypt msg. with sha256 and take hex of encryption
-                                        ; b64encode the encrypted data
+(defcustom ycmd-server-program '("python" "/Users/sixtynorth/projects/ycmd/ycmd")
+  :type '(string)
+  :group 'ycmd)
 
-(let* ((secret "1234123412341234")
-       (hmac (my-hmac "asdf" secret))
-       (hex-hmac (encode-hex-string hmac))
-       (encoded-hex-hmac (base64-encode-string hex-hmac)))
-  ; THIS DOES IT!!!
-  (message encoded-hex-hmac))
-
-(setq hmac-secret "lX9yb3Jmj0MQD7oD7SrYMg==")
-
-(json-encode data)
-
-(define-hmac-function my-hmac
+(define-hmac-function ycmd-hmac
   (lambda (x) (secure-hash 'sha256 x nil nil 1))
   64 64)
 
-(let* ((options (json-read-file "/Users/sixtynorth/projects/ycmd/options.json.BAK"))
-       (hmac-secret  (base64-decode-string (cdr (assoc 'hmac_secret options)))))
-  (message (format "%s" options))
-  (message hmac-secret))
+(defun ycmd-get-completions (pos)
+  (interactive "d")
+  (let* ((column-num (+ 1 (save-excursion (goto-char pos) (current-column))))
+         (line-num (line-number-at-pos (point)))
+         (full-path (buffer-file-name))
+         (file-contents (buffer-string))
+         (file-types '("cpp"))
+         (content `(("column_num" . ,column-num)
+                    ("file_data" .
+                     ((,full-path . (("contents" . ,file-contents)
+                                     ("filetypes" . ,file-types)))))
+                    ("filepath" . ,full-path)
+                    ("line_num" . ,line-num))))
+    (ycmd-request "/completions" content :parser 'json-read)))
 
-; BINGO!
-(let* ((options (json-read-file "/Users/sixtynorth/projects/ycmd/options.json.BAK"))
-       (hmac-secret (base64-decode-string (cdr (assoc 'hmac_secret options))))
-       (content (json-encode data))
-       (hmac (my-hmac content hmac-secret))
-       (hex-hmac (encode-hex-string hmac))
-       (encoded-hex-hmac (base64-encode-string hex-hmac 't)))
-  (message encoded-hex-hmac)
-  (request
-   "http://127.0.0.1:64358/completions"
-   :headers `(("Content-Type" . "application/json")
-              ("X-Ycm-Hmac" . ,encoded-hex-hmac))
-   :sync t
-   :parser 'json-read
-   :data content
-   :type "POST")
-  )
+;; (defun simple-test ()
+;;   (interactive)
+;;   (message
+;;    (ycmd-request
+;;     "/load_extra_conf_file"
+;;     '(("filepath" . "/Users/sixtynorth/projects/boost_python_exception/.ycm_extra_conf.py"))))
+;;   (message
+;;    (ycmd-request
+;;     "/debug_info"
+;;     '()))
+;;   (message
+;;    (format "%s" 
+;;            (ycmd-request
+;;             "/completions"
+;;             `(("column_num" . 7)
+;;               ("file_data" .
+;;                (("/Users/sixtynorth/projects/boost_python_exception/src/boost_python_exception/exceptions.cpp" .
+;;                  (("contents" . "class Foo { int x; int y; char c; };
+
+;; int main() {
+;;     Foo f;
+;;     f.
+;; }
+;; ")
+;;                   ("filetypes" . (list "cpp"))))))
+;;               ("filepath" . "/Users/sixtynorth/projects/boost_python_exception/src/boost_python_exception/exceptions.cpp")
+;;               ("line_num" . 5))
+;;             :parser 'json-read))))
+
+(defun* ycmd-request (location content &key (parser 'buffer-string))
+  (let* ((options (json-read-file "/Users/sixtynorth/projects/ycmd/options.json.BAK"))
+         (hmac-secret (base64-decode-string (cdr (assoc 'hmac_secret options))))
+         (content (json-encode content))
+         (hmac (my-hmac content hmac-secret))
+         (hex-hmac (encode-hex-string hmac))
+         (encoded-hex-hmac (base64-encode-string hex-hmac 't)))
+    (request-response-data
+     (request
+      (concat "http://127.0.0.1:58526" location)
+      :headers `(("Content-Type" . "application/json")
+                 ("X-Ycm-Hmac" . ,encoded-hex-hmac))
+      :sync 1
+      :parser parser
+      :data content
+      :type "POST"))))
+
+
